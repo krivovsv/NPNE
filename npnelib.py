@@ -3,6 +3,22 @@ import numpy as np
 
 @tf.function
 def NPq(r,y,Ib,nr,ny,Itw=None,fenv=None,rmin=0,rmax=1):
+    """ implements NPq (non-parametric committor optimization) iteration.
+    
+    r is the putative RC time-series
+    y is a randomly chosen collective variable or coordinate to improve r
+    Ib is the boundary indicator function:
+        Ib(i)=1 when X(i) belongs to the boundary states and 0 otherwise
+    nr the degree of the polynomial f(r)
+    ny the degree of the polynomial f(r,y)
+    for example:
+        use nr=17, ny=0 for a polynomial f(r) of degree 17 only
+        use nr=7, ny=7 for a polynomial f(r,y) of degree 7 only
+    Itw trajectories indicator function multiplied by a rewighting factor,
+        to use with multiple short trajectores. Default value is 1.
+    fenv common envelope to focus optimization on a particular region
+    rmin,rmax - minimal and maximal to clip the updated RC
+    """
     
     if Itw==None : Itw=tf.ones_like(Ib)
     nIb=1-Ib
@@ -39,6 +55,23 @@ def NPq(r,y,Ib,nr,ny,Itw=None,fenv=None,rmin=0,rmax=1):
 
 @tf.function
 def NPNEq(r,y,It,Ib,nr,ny,fenv=None,rmin=0,rmax=1):
+    """ implements NPNEq (non-parametric non-equilbrium committor
+    optimization) iteration.
+    
+    r is the putative RC time-series
+    y is a randomly chosen collective variable or coordinate to improve r
+    It is the trajectory indictor function:
+        It(i)=1 if X(i) and X(i+1) belong to the same short trajectory
+    Ib is the boundary indicator function:
+        Ib(i)=1 when X(i) belongs to the boundary states and 0 otherwise
+    nr the degree of the polynomial f(r)
+    ny the degree of the polynomial f(r,y)
+    for example
+        use nr=17, ny=0 for a polynomial f(r) of degree 17 only
+        use nr=7, ny=7 for a polynomial f(r,y) of degree 7 only
+    fenv common envelope to focus optimization on a particular region
+    rmin,rmax - minimal and maximal to clip the updated RC
+    """
     
     nIb=1-Ib
 
@@ -73,6 +106,11 @@ def NPNEq(r,y,It,Ib,nr,ny,fenv=None,rmin=0,rmax=1):
     return rn 
 
 def comp_Zh(lx,dx,lw=[]):
+    """ compute Zh, histogram-based partition function/probability
+    lx - list of coordinates, e.g., a trajectory time-series
+    dx - bin size
+    lw - list of weights, for re-weighting.
+    """
     import math
     zh={}
     if len(lw)>0:
@@ -89,7 +127,42 @@ def comp_Zh(lx,dx,lw=[]):
     ly=[zh[x]/dx for x in lx]
     return lx,ly
 
+
+def comp_Zq(lx, itraj, dt=1, strict=False, dx=1e-3):
+    """computes non-equilibrium committor validation criterion Z_q,
+ 
+    lx - list of coordinates, a trajectory time-series
+    itraj - trajectory index time-series:
+        tells to which short trajectory point X(i) belongs to
+    dt - the value of \Delta t
+    strict - whether to construct the exact profile, accurate representation of step functions
+    dx - bin size for coarse-graining
+    """
+    return comp_Zca(lx, a=1, itraj=itraj, dt=dt, strict=strict, dx=dx, eq=False)
+
+
+
 def comp_Zca(lx, a, itraj=[], lw=[], dt=1, strict=False, dx=1e-3, mindx=1e-3, eq=False):
+    """computes cut-based free energy profiles Z_C,\alpha for non-equilbrium and equilbrium cases
+    non-equilbrium case is default, computes only outgoing part of the Z_C,\alpha,
+        which for a=1 (\alpha=1) gives Z_q
+    equilbrium case considered when eq=True, computes outgoing and ingoing parts of Z_C,\alpha
+    can be used with a single trajectory and with ensamble of trajectories
+    accepts re-weighting factors
+    
+    lx - list of coordinates, a trajectory time-series
+    a  - the value of alpha
+    itraj - trajectory index time-series:
+        tells to which short trajectory point X(i) belongs to
+        if itraj=[], a single long trajectory is assumed
+    lw - list of weights or re-weighting factors
+    dt - the value of \Delta t
+    strict - whether to construct the exact profile, accurate representation of step functions
+    dx - bin size for coarse-graining
+    mindx - minimal value of dx:
+        used to suppress errors for a<0
+    eq - flag to compute equilbrium profile, by including in-going transitions
+    """
     import math
     dzc={}
     tmax=len(lx)
@@ -131,6 +204,19 @@ def comp_Zca(lx, a, itraj=[], lw=[], dt=1, strict=False, dx=1e-3, mindx=1e-3, eq
     return lx,ly 
 
 def comp_ekn_tp(xtraj,x0,x1,itraj=[],dx=1e-3,dt=1):
+    """ transition path segment counting scheme
+    computes an equilibrium kinetic network - the number of transition between different points
+    it should be followed by function comp_Zca_ekn, which computes the cut-profiles
+    
+    xtraj - trajectory time-series
+    x0 - the position of the boundary of the left boundary state
+    x1 - the position of the boundary of the right boundary state
+    itraj - trajectory index time-series:
+        tells to which short trajectory point X(i) belongs to
+        if itraj=[], a single long trajectory is assumed
+    dx - bin size for coarse-graining
+    dt - the value of \Delta t
+    """
     import math
     def processsegm(traj, x0,x1): # process a TP segment
         n=len(traj)
@@ -192,6 +278,16 @@ def comp_ekn_tp(xtraj,x0,x1,itraj=[],dx=1e-3,dt=1):
     return ekn
 
 def comp_Zca_ekn(ekn,a,dx=None,strict=False,eq=False):
+    """computes cut-based free energy profiles Z_C,\alpha using the transition
+    pathway segment summation scheme, for non-equilbrium and equilbrium cases
+    used together with comp_ekn_tp function
+    
+    ekn - an equilibrium kinetic network computed by comp_ekn_tp
+    a  - the value of alpha
+    dx - bin size for coarse-graining
+    strict - whether to construct the exact profile, accurate representation of step functions
+    eq - flag to compute equilbrium profile, by including in-going transitions
+    """
     import math
     dzc={}
     for y,x in ekn:
@@ -227,6 +323,20 @@ def comp_Zca_ekn(ekn,a,dx=None,strict=False,eq=False):
 
 @tf.function
 def NPNEw(r0,y,It,nr,ny):
+    """ implements NPNEw (non-parametric non-equilbrium re-weighting factors 
+    optimization) iteration.
+    
+    
+    r0 is the putative RC time-series
+    y is a randomly chosen collective variable or coordinate to improve r
+    It is the trajectory indictor function:
+        It(i)=1 if X(i) and X(i+1) belong to the same short trajectory
+    nr the degree of the polynomial f(r)
+    ny the degree of the polynomial f(r,y)
+    for example
+        use nr=17, ny=0 for a polynomial f(r) of degree 17 only
+        use nr=7, ny=7 for a polynomial f(r,y) of degree 7 only
+    """
     
     r=r0/tf.math.reduce_max(r0)
     fk=[]
@@ -262,9 +372,25 @@ def NPNEw(r0,y,It,nr,ny):
     return rn
 
 def tonatural(lq,dx,dtsim=1,itraj=[],lw=[],fixZhA=True,zcm1=False):
-#   Zc1=dt*D*Zh; dt=1
-#   D=Zc1/(Zh*dt)
-#   dy/dx=D^-1/2
+    """ transforms putative commitor coordinate to the natural coordinate,
+    where diffusion coefficient is constant. The following equations are used
+    Zc1=dt*D*Zh 
+    D=Zc1/(Zh*dt)
+    dy/dx=D^-1/2
+    
+    lq - committor time-series
+    dx - bin size to compute the profiles and integrate
+    dtsim - the trajectory/simulation sampling interval in time units in which D=1.
+    itraj - trajectory index time-series:
+        tells to which short trajectory point X(i) belongs to
+        if itraj=[], a single long trajectory is assumed  
+    lw - list of weights, for re-weighting,
+        if lw=[], no re-weighting
+    fixZhA - the leftmost value of Z_H, Z_H for state A, usually has a very large value,
+        which leads to unphysical results. fixZhA=True assigns it to the next value 
+    zcm1 - whether to use Z_C,-1 to estimate Z_H. Z_C,-1 gives a more robust estimate
+        of Z_H if the sampling interval is sufficiently small.
+    """
     import math
 
     if zcm1:
