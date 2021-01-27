@@ -28,13 +28,13 @@ def NPq(r,y,Ib,nr,ny,Itw=None,fenv=None,rmin=0,rmax=1):
         f=tf.identity(nIb)
     else:
         f=tf.identity(fenv*nIb)
-    for ir in range(ny):
+    for ir in range(ny+1):
         fy=tf.identity(f)
-        for iy in range(ny-ir):
+        for iy in range(ny+1-ir):
             fk.append(fy)
             fy=fy*y
         f=f*r
-    for ir in range(ny,nr):
+    for ir in range(ny+1,nr+1):
         fk.append(f)
         f=f*r
     fk=tf.stack(fk)
@@ -80,13 +80,13 @@ def NPNEq(r,y,It,Ib,nr,ny,fenv=None,rmin=0,rmax=1):
         f=tf.identity(nIb)
     else:
         f=tf.identity(fenv*nIb)
-    for ir in range(ny):
+    for ir in range(ny+1):
         fy=tf.identity(f)
-        for iy in range(ny-ir):
+        for iy in range(ny+1-ir):
             fk.append(fy)
             fy=fy*y
         f=f*r
-    for ir in range(ny,nr):
+    for ir in range(ny+1,nr+1):
         fk.append(f)
         f=f*r
     fk=tf.stack(fk)
@@ -142,11 +142,11 @@ def comp_Zq(lx, itraj, dt=1, strict=False, dx=1e-3):
 
 
 
-def comp_Zca(lx, a, itraj=[], lw=[], dt=1, strict=False, dx=1e-3, mindx=1e-3, eq=False):
+def comp_Zca(lx, a, itraj=[], lw=[], dt=1, strict=False, dx=1e-3, mindx=1e-3, eq=True):
     """computes cut-based free energy profiles Z_C,\alpha for non-equilbrium and equilbrium cases
-    non-equilbrium case is default, computes only outgoing part of the Z_C,\alpha,
-        which for a=1 (\alpha=1) gives Z_q
-    equilbrium case considered when eq=True, computes outgoing and ingoing parts of Z_C,\alpha
+    non-equilbrium case (eq=False) computes only outgoing part of the Z_C,\alpha,
+        which for a=1 (\alpha=1) gives Z_q - the non-equilbrium committor criterion
+    equilbrium case (eq=True), computes outgoing and ingoing parts of Z_C,\alpha
     can be used with a single trajectory and with ensamble of trajectories
     accepts re-weighting factors
     
@@ -161,7 +161,7 @@ def comp_Zca(lx, a, itraj=[], lw=[], dt=1, strict=False, dx=1e-3, mindx=1e-3, eq
     dx - bin size for coarse-graining
     mindx - minimal value of dx:
         used to suppress errors for a<0
-    eq - flag to compute equilbrium profile, by including in-going transitions
+    eq - flag to compute equilibrium profile (eq=True), by including in-going transitions
     """
     import math
     dzc={}
@@ -277,7 +277,7 @@ def comp_ekn_tp(xtraj,x0,x1,itraj=[],dx=1e-3,dt=1):
     for ij in ekn:ekn[ij]=float(ekn[ij])/dt   
     return ekn
 
-def comp_Zca_ekn(ekn,a,dx=None,strict=False,eq=False):
+def comp_Zca_ekn(ekn,a,dx=None,strict=False,eq=True):
     """computes cut-based free energy profiles Z_C,\alpha using the transition
     pathway segment summation scheme, for non-equilbrium and equilbrium cases
     used together with comp_ekn_tp function
