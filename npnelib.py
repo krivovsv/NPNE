@@ -2,43 +2,20 @@ import tensorflow as tf
 import numpy as np
 
 @tf.function
-def NPq(r,y,Ib,nr,ny,Itw=None,fenv=None,rmin=0,rmax=1):
+def NPq(r,fk,Ib,Itw=None):
     """ implements NPq (non-parametric committor optimization) iteration.
     
     r is the putative RC time-series
-    y is a randomly chosen collective variable or coordinate to improve r
+    fk are the basis functions of the variation delta r
     Ib is the boundary indicator function:
         Ib(i)=1 when X(i) belongs to the boundary states and 0 otherwise
-    nr the degree of the polynomial f(r)
-    ny the degree of the polynomial f(r,y)
-    for example:
-        use nr=17, ny=0 for a polynomial f(r) of degree 17 only
-        use nr=7, ny=7 for a polynomial f(r,y) of degree 7 only
     Itw trajectories indicator function multiplied by a rewighting factor,
         to use with multiple short trajectores. Default value is 1.
-    fenv common envelope to focus optimization on a particular region
-    rmin,rmax - minimal and maximal to clip the updated RC
     """
     
-    if Itw==None : Itw=tf.ones_like(Ib)
-    nIb=1-Ib
-    
-    fk=[]
-    if fenv==None:
-        f=tf.identity(nIb)
-    else:
-        f=tf.identity(fenv*nIb)
-    for ir in range(ny+1):
-        fy=tf.identity(f)
-        for iy in range(ny+1-ir):
-            fk.append(fy)
-            fy=fy*y
-        f=f*r
-    for ir in range(ny+1,nr+1):
-        fk.append(f)
-        f=f*r
-    fk=tf.stack(fk)
-    
+    if Itw is None : Itw=tf.ones_like(r)
+    fk=fk*(1-Ib)
+
     dfk=tf.roll(fk,-1,1)-fk
     akj=tf.tensordot(dfk*Itw,dfk,axes=[1,1])
     
@@ -50,46 +27,23 @@ def NPq(r,y,Ib,nr,ny,Itw=None,fenv=None,rmin=0,rmax=1):
     al_j=tf.reshape(al_j, [al_j.shape[0]])
     
     rn=r+tf.tensordot(al_j,fk,1)
-    rn=tf.clip_by_value(rn,rmin,rmax)
+    rn=tf.clip_by_value(rn,0,1)
     return rn 
 
 @tf.function
-def NPNEq(r,y,It,Ib,nr,ny,fenv=None,rmin=0,rmax=1):
+def NPNEq(r,fk,Ib,It):
     """ implements NPNEq (non-parametric non-equilbrium committor
     optimization) iteration.
     
     r is the putative RC time-series
-    y is a randomly chosen collective variable or coordinate to improve r
-    It is the trajectory indictor function:
-        It(i)=1 if X(i) and X(i+1) belong to the same short trajectory
+    fk are the basis functions of the variation delta r
     Ib is the boundary indicator function:
         Ib(i)=1 when X(i) belongs to the boundary states and 0 otherwise
-    nr the degree of the polynomial f(r)
-    ny the degree of the polynomial f(r,y)
-    for example
-        use nr=17, ny=0 for a polynomial f(r) of degree 17 only
-        use nr=7, ny=7 for a polynomial f(r,y) of degree 7 only
-    fenv common envelope to focus optimization on a particular region
+    It is the trajectory indictor function:
+        It(i)=1 if X(i) and X(i+1) belong to the same short trajectory
     rmin,rmax - minimal and maximal to clip the updated RC
     """
-    
-    nIb=1-Ib
-
-    fk=[]
-    if fenv==None:
-        f=tf.identity(nIb)
-    else:
-        f=tf.identity(fenv*nIb)
-    for ir in range(ny+1):
-        fy=tf.identity(f)
-        for iy in range(ny+1-ir):
-            fk.append(fy)
-            fy=fy*y
-        f=f*r
-    for ir in range(ny+1,nr+1):
-        fk.append(f)
-        f=f*r
-    fk=tf.stack(fk)
+    fk=fk*(1-Ib)
     
     dfj=fk-tf.roll(fk,-1,1)
     akj=tf.tensordot(fk*It,dfj,axes=[1,1])
@@ -102,8 +56,89 @@ def NPNEq(r,y,It,Ib,nr,ny,fenv=None,rmin=0,rmax=1):
     al_j=tf.reshape(al_j, [al_j.shape[0]])
     
     rn=r+tf.tensordot(al_j,fk,1)
-    rn=tf.clip_by_value(rn,rmin,rmax)
+    rn=tf.clip_by_value(rn,0,1)
     return rn 
+
+@tf.function
+def NPNEw(r,fk,It):
+    """ implements NPNEw (non-parametric non-equilbrium re-weighting factors 
+    optimization) iteration.
+    
+    r is the putative RC time-series
+    fk are the basis functions of the variation delta r
+    It is the trajectory indictor function:
+        It(i)=1 if X(i) and X(i+1) belong to the same short trajectory
+    """
+    
+    dfk=fk-tf.roll(fk,-1,1)
+
+    b=-tf.tensordot(dfk,r*It, 1)
+    b=tf.reshape(b, [b.shape[0],1])
+    scale=tf.math.reduce_sum(1-r*It)
+    scale=tf.reshape(scale,[1,1])
+    b=tf.concat((b,scale),0)
+    
+    ones=tf.reshape(It,[1,It.shape[0]])
+    dfk=tf.concat((dfk*It,ones),0)
+    akj=tf.tensordot(dfk,fk,axes=[1,1])
+    
+    al_j=tf.linalg.lstsq(akj,b,fast=False)
+    al_j=tf.reshape(al_j, [al_j.shape[0]])
+    
+    rn=r+tf.tensordot(al_j,fk,1)
+    
+    return rn
+
+
+@tf.function
+def basis_poly_ry(r,y,n,fenv=None):
+    """computes basis functions as terms of polynomial of variables r and y
+
+    r is the putative RC time-series
+    y is a randomly chosen collective variable or coordinate to improve r
+    n is the degree of the polynomial
+    fenv is common envelope to focus optimization on a particular region
+    """
+    r=r/tf.math.reduce_max(tf.math.abs(r))
+    y=y/tf.math.reduce_max(tf.math.abs(y))
+
+    if fenv is None:
+        f=tf.ones_like(r)
+    else:
+        f=tf.identity(fenv)
+        
+    fk=[]
+    for ir in range(n+1):
+        fy=tf.identity(f)
+        for iy in range(n+1-ir):
+            fk.append(fy)
+            fy=fy*y
+        f=f*r
+    return tf.stack(fk)
+
+@tf.function
+def basis_poly_r(r,n,fenv=None):
+    """computes basis functions as terms of polynomial of variable r
+
+    r is the putative RC time-series
+    y is a randomly chosen collective variable or coordinate to improve r
+    Ib is the boundary indicator function:
+        Ib(i)=1 when X(i) belongs to the boundary states and 0 otherwise
+    n is the degree of the polynomial
+    fenv is common envelope to focus optimization on a particular region
+    """
+    r=r/tf.math.reduce_max(tf.math.abs(r))
+
+    if fenv is None:
+        f=tf.ones_like(r)
+    else:
+        f=tf.identity(fenv)
+    
+    fk=[]
+    for ir in range(n+1):
+        fk.append(f)
+        f=f*r
+    return tf.stack(fk)
 
 def comp_Zh(lx,dx,lw=[]):
     """ compute Zh, histogram-based partition function/probability
@@ -321,55 +356,6 @@ def comp_Zca_ekn(ekn,a,dx=None,strict=False,eq=True):
     return lx,ly 
 
 
-@tf.function
-def NPNEw(r0,y,It,nr,ny):
-    """ implements NPNEw (non-parametric non-equilbrium re-weighting factors 
-    optimization) iteration.
-    
-    
-    r0 is the putative RC time-series
-    y is a randomly chosen collective variable or coordinate to improve r
-    It is the trajectory indictor function:
-        It(i)=1 if X(i) and X(i+1) belong to the same short trajectory
-    nr the degree of the polynomial f(r)
-    ny the degree of the polynomial f(r,y)
-    for example
-        use nr=17, ny=0 for a polynomial f(r) of degree 17 only
-        use nr=7, ny=7 for a polynomial f(r,y) of degree 7 only
-    """
-    
-    r=r0/tf.math.reduce_max(r0)
-    fk=[]
-    f=tf.ones_like(r)
-    for ir in range(ny+1):
-        fy=tf.identity(f)
-        for iy in range(ny+1-ir):
-            fk.append(fy)
-            fy=fy*y
-        f=f*r
-    for ir in range(ny+1,nr+1):
-        fk.append(f)
-        f=f*r
-    fk=tf.stack(fk)
-    
-    dfk=fk-tf.roll(fk,-1,1)
-
-    b=-tf.tensordot(dfk,r0*It, 1)
-    b=tf.reshape(b, [b.shape[0],1])
-    scale=tf.math.reduce_sum(1-r0*It)
-    scale=tf.reshape(scale,[1,1])
-    b=tf.concat((b,scale),0)
-    
-    ones=tf.reshape(It,[1,It.shape[0]])
-    dfk=tf.concat((dfk*It,ones),0)
-    akj=tf.tensordot(dfk,fk,axes=[1,1])
-    
-    al_j=tf.linalg.lstsq(akj,b,fast=False)
-    al_j=tf.reshape(al_j, [al_j.shape[0]])
-    
-    rn=r0+tf.tensordot(al_j,fk,1)
-    
-    return rn
 
 def tonatural(lq,dx,dtsim=1,itraj=[],lw=[],fixZhA=True,zcm1=False):
     """ transforms putative commitor coordinate to the natural coordinate,
